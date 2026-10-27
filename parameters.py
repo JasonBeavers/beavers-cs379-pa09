@@ -1,29 +1,3 @@
-"""
-PA 7: The Parameter Simulator -- starter.
-
-Complete bind_parameters, commit_value_result, and Closure below.
-Cell, evaluate(), and FunctionDecl are already provided -- do not
-modify them. See the assignment, Part B, for the
-full requirements.
-
-Design note (filling a gap in the assignment spec): Requirement 1
-says value-result mode must write the callee's final local value back
-to the caller "only when the function returns" -- but bind_parameters
-runs once, at CALL time, before the body executes. One function alone
-can't do both "bind at call time" and "write back at return time," so
-this starter adds a second function, commit_value_result, called
-AFTER the simulated function body finishes. bind_parameters sets up
-bookkeeping for value-result parameters (a list of (param_name,
-caller_var_name) pairs), and commit_value_result uses it to do the
-delayed write-back.
-
-Design note 2: variables are stored as Cell objects (a mutable box),
-not raw values, specifically so reference-mode parameters can share
-the exact same storage as the caller's variable -- see Part A,
-Questions 1-2, for why "bind directly to the caller's slot" requires
-this instead of just copying a plain value.
-"""
-
 from typing import Any, List, Tuple
 
 from parser import BinOp, Number, Variable
@@ -74,40 +48,78 @@ def assign_through(env: Environment, name: str, value: Any) -> None:
 
 
 def bind_parameters(param_specs: List[Tuple[str, str]], arg_nodes: list, caller_env: Environment, callee_record) -> None:
-    """
-    Populate callee_record.locals_env according to each parameter's
-    mode ("value", "reference", or "value-result"). For value-result
-    parameters, also record what commit_value_result needs to do the
-    delayed write-back later -- store it whichever way you like (e.g.
-    an attribute on callee_record such as callee_record.pending_writeback).
-    """
-    # TODO
-    raise NotImplementedError
+    callee_record.pending_writeback = []
+
+    for (param_name, mode), arg_node in zip(param_specs, arg_nodes):
+
+        if mode == "value":
+            value = evaluate(arg_node, caller_env)
+            callee_record.locals_env.define(param_name, Cell(value))
+
+        elif mode == "reference":
+            if not isinstance(arg_node, Variable):
+                raise TypeError(
+                    "Reference arguments must be caller variables."
+                )
+
+            caller_cell = caller_env.resolve(arg_node.name)
+
+            if not isinstance(caller_cell, Cell):
+                raise TypeError(
+                    f"'{arg_node.name}' is not bound to a Cell."
+                )
+
+            callee_record.locals_env.define(param_name, caller_cell)
+
+        elif mode == "value-result":
+            if not isinstance(arg_node, Variable):
+                raise TypeError(
+                    "Value-result arguments must be caller variables."
+                )
+
+            caller_cell = caller_env.resolve(arg_node.name)
+
+            if not isinstance(caller_cell, Cell):
+                raise TypeError(
+                    f"'{arg_node.name}' is not bound to a Cell."
+                )
+
+            callee_record.locals_env.define(
+                param_name, Cell(caller_cell.value)
+            )
+
+            callee_record.pending_writeback.append(
+                (param_name, caller_cell)
+            )
+
+        else:
+            raise ValueError(f"Unknown parameter mode: {mode}")
 
 
 def commit_value_result(callee_record, caller_env: Environment) -> None:
-    """
-    For every value-result parameter bound by bind_parameters on this
-    callee_record, copy its FINAL local value back into the caller's
-    corresponding variable now (call this only after the callee's body
-    has finished running).
-    """
-    # TODO
-    raise NotImplementedError
+    pending = getattr(callee_record, "pending_writeback", [])
+
+    for param_name, caller_cell in pending:
+        local_cell = callee_record.locals_env.resolve(param_name)
+
+        if not isinstance(local_cell, Cell):
+            raise TypeError(
+                f"'{param_name}' is not bound to a Cell."
+            )
+
+        caller_cell.value = local_cell.value
 
 
 class Closure:
     def __init__(self, declaration: FunctionDecl, defining_env: Environment) -> None:
-        # TODO
-        raise NotImplementedError
+        self.declaration = declaration
+        self.defining_env = defining_env
+
 
     def call(self, args: list, caller_env: Environment):
-        """
-        Create the callee Environment as a child of self.defining_env
-        (NOT caller_env) -- this is what makes closure capture work.
-        Bind each declaration.params[i] to args[i] (already-evaluated
-        values, wrapped in a Cell), then evaluate declaration.body in
-        that new environment and return the result.
-        """
-        # TODO
-        raise NotImplementedError
+        callee_env = Environment(parent=self.defining_env)
+
+        for param_name, arg_value in zip(self.declaration.params, args):
+            callee_env.define(param_name, Cell(arg_value))
+
+        return evaluate(self.declaration.body, callee_env)
